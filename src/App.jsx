@@ -199,25 +199,30 @@ export default function App() {
       });
 
       // RUL Prediction
-      fetch('http://localhost:5000/predict_rul', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sequence: [sequence] })  // Batch of 1
-      })
-      .then(res => res.json())
-      .then(data => setRulPrediction(Math.round(data.rul)))
-      .catch(err => console.error('RUL error:', err));
+      const backendUrl = process.env.NODE_ENV === 'production'
+  ? 'https://drill-backend-api-123.onrender.com' // Replace with your actual Render URL
+  : 'http://localhost:5000';
 
-      // Temp Estimation (exclude temp for input)
-      const sequenceForEst = sequence.map(row => row.slice(1)).flat();
-      fetch('http://localhost:5000/predict_temp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sequence: sequenceForEst })
-      })
-      .then(res => res.json())
-      .then(data => setEstimatedTemp(data.temp_est.toFixed(2)))
-      .catch(err => console.error('Temp est error:', err));
+// RUL Prediction
+fetch(`${backendUrl}/predict_rul`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sequence: [sequence] })  // Batch of 1
+})
+  .then(res => res.json())
+  .then(data => setRulPrediction(Math.round(data.rul)))
+  .catch(err => console.error('RUL error:', err));
+
+// Temp Estimation (exclude temp for input)
+const sequenceForEst = sequence.map(row => row.slice(1)).flat();
+fetch(`${backendUrl}/predict_temp`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ sequence: sequenceForEst })
+})
+  .then(res => res.json())
+  .then(data => setEstimatedTemp(data.temp_est.toFixed(2)))
+  .catch(err => console.error('Temp est error:', err));
     }
   }, [records]);
 
