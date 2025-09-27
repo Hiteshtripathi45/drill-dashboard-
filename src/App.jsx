@@ -200,7 +200,7 @@ export default function App() {
 
       // RUL Prediction
       const backendUrl = process.env.NODE_ENV === 'production'
-  ? 'https://drill-backend-api-123.onrender.com' // Replace with your actual Render URL
+  ? 'https://drill-dashboard-backend.onrender.com/' // Replace with your actual Render URL
   : 'http://localhost:5000';
 
 // RUL Prediction
