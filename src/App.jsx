@@ -54,6 +54,16 @@ const thresholds = {
   depth: 40
 };
 
+// --- Sensor validity / connection-loss config ---
+// A running drill should never realistically report below this temp.
+// Anything lower is treated as a delayed/garbage packet and ignored
+// for display purposes (the last good reading stays on screen instead).
+const MIN_VALID_TEMP = 25;
+
+// If no new document arrives from Firestore within this window, we
+// assume the drill has stopped sending data / is powered off.
+const OFFLINE_TIMEOUT_MS = 5000;
+
 // Drill Visualization Component
 function DrillVisualization({ isActive, latest }) {
   return (
@@ -103,6 +113,16 @@ export default function App() {
   const [samplingRate, setSamplingRate] = useState('N/A');
   const chartRef = useRef(null);
   const limitToShow = 50; // how many points to show in chart
+
+  // The "validated" reading actually shown on the UI. Only updated when a
+  // new doc passes the sanity check (see onSnapshot handler below).
+  const [displayLatest, setDisplayLatest] = useState({});
+
+  // Whether the drill is considered online (sent data within the last
+  // OFFLINE_TIMEOUT_MS), and how long it's been since we last heard from it.
+  const [isOnline, setIsOnline] = useState(false);
+  const [secondsSinceLastData, setSecondsSinceLastData] = useState(null);
+  const lastDataTimestampRef = useRef(null);
 
   // ML states
   const [rulPrediction, setRulPrediction] = useState(null);
@@ -157,6 +177,26 @@ export default function App() {
         const arr = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         setRecords(arr);
 
+        if (arr.length > 0) {
+          // Heard from the device — reset the offline clock regardless of
+          // whether the value itself turns out to be valid.
+          lastDataTimestampRef.current = Date.now();
+
+          // Only promote this doc to the displayed reading if its temp
+          // looks sane. A delayed/garbage packet below MIN_VALID_TEMP is
+          // ignored, and the previous good reading stays on screen.
+          const candidate = arr[0];
+          const candidateTemp = candidate.temp;
+          const isValid =
+            candidateTemp === undefined || candidateTemp === null
+              ? true
+              : candidateTemp >= MIN_VALID_TEMP;
+
+          if (isValid) {
+            setDisplayLatest(candidate);
+          }
+        }
+
         // Calculate sampling rate (average interval in seconds)
         if (arr.length > 1) {
           const times = arr
@@ -178,6 +218,23 @@ export default function App() {
       }
     );
     return () => unsub();
+  }, []);
+
+  // Offline detection: every second, check how long it's been since the
+  // last Firestore doc arrived. If it's longer than OFFLINE_TIMEOUT_MS,
+  // assume the drill has been turned off / disconnected.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!lastDataTimestampRef.current) {
+        setIsOnline(false);
+        setSecondsSinceLastData(null);
+        return;
+      }
+      const elapsedMs = Date.now() - lastDataTimestampRef.current;
+      setSecondsSinceLastData(Math.floor(elapsedMs / 1000));
+      setIsOnline(elapsedMs <= OFFLINE_TIMEOUT_MS);
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // ML Prediction useEffect
@@ -267,8 +324,8 @@ fetch(`${backendUrl}/predict_temp`, {
     scales: { y: { beginAtZero: true } }
   };
 
-  // latest (most recent) values
-  const latest = records[0] || {};
+  // latest (most recent, validated) values
+  const latest = displayLatest;
 
   // Export chart as PNG (high resolution)
   function exportChart() {
@@ -318,6 +375,11 @@ fetch(`${backendUrl}/predict_temp`, {
       <header style={styles.header}>
         <h1 style={{ margin: 0 }}>Drill Dashboard (React)</h1>
         <div style={{ fontSize: 13, color: '#333' }}>Firestore: collection <code>drillData</code> • Live listener • ML Predictions</div>
+        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: isOnline ? '#28a745' : '#cc3300' }}>
+          {isOnline
+            ? '🟢 Drill ONLINE — receiving data'
+            : `🔴 Drill OFFLINE${secondsSinceLastData !== null ? ` (no data for ${secondsSinceLastData}s)` : ''}`}
+        </div>
       </header>
 
       <main style={styles.main}>
@@ -435,7 +497,7 @@ fetch(`${backendUrl}/predict_temp`, {
             <small>Sampling Rate: {samplingRate}</small>
           </div>
         </div>
-        <DrillVisualization isActive={isDrillAnimating} latest={latest} />
+        <DrillVisualization isActive={isDrillAnimating && isOnline} latest={latest} />
       </main>
 
       <footer style={styles.footer}>
